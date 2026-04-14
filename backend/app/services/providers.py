@@ -14,6 +14,11 @@ from xml.etree import ElementTree as ET
 import httpx
 import pandas as pd
 import requests
+import warnings
+
+# Suppress harmless pandas/numpy casting warnings during data scraping
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="pandas")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
 

@@ -32,6 +32,15 @@ const nextConfig = {
       },
     ];
   },
+  async rewrites() {
+    const apiBase = process.env.INTERNAL_API_BASE || "http://localhost:8000";
+    return [
+      {
+        source: "/api/v1/:path*",
+        destination: `${apiBase}/api/v1/:path*`,
+      },
+    ];
+  },
   webpack: (config) => {
     // Prevent noisy dev-time 404s for third-party sourcemap comments that
     // reference non-emitted *.map files in Next chunks.
