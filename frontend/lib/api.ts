@@ -580,3 +580,26 @@ export async function parsePortfolioDocument(file: File): Promise<{ holdings: an
   const payload = await res.json();
   return { holdings: payload.holdings || [] };
 }
+export async function fetchMarketSummary(options: { force?: boolean } = {}): Promise<{
+  mood: number;
+  gainers: Array<{ symbol: string; cmp: number; change: number; changePercent: number }>;
+  losers: Array<{ symbol: string; cmp: number; change: number; changePercent: number }>;
+  updatedAt: string;
+}> {
+  const force = Boolean(options.force);
+  const key = "market-summary";
+  const fresh = force ? null : getFreshCache<any>(key, 15_000); // 15s cache
+  if (fresh) return fresh;
+
+  try {
+    const res = await fetchWithTimeout(getApiUrl("/market-summary"), { cache: "no-store" }, force ? 10000 : 7000);
+    if (!res.ok) throw new Error(`Market summary request failed: ${res.status}`);
+    const payload = await res.json();
+    setCache(key, payload);
+    return payload;
+  } catch (err) {
+    const stale = getStaleCache<any>(key);
+    if (stale) return stale;
+    throw err;
+  }
+}

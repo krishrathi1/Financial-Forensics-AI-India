@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
 
-import { fetchTickerTape } from "@/lib/api";
+import { fetchMarketSummary } from "@/lib/api";
 
 type TickerRow = { symbol: string; cmp: number; change: number; changePercent: number };
 
@@ -13,15 +13,19 @@ function formatSigned(value: number) {
 }
 
 export function TopMovers() {
-  const [rows, setRows] = useState<TickerRow[]>([]);
+  const [gainers, setGainers] = useState<TickerRow[]>([]);
+  const [losers, setLosers] = useState<TickerRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    const load = async (force = false) => {
       try {
-        const data = await fetchTickerTape([], { force: false });
-        if (alive) setRows(data);
+        const data = await fetchMarketSummary({ force });
+        if (alive) {
+          setGainers(data.gainers);
+          setLosers(data.losers);
+        }
       } catch {
         /* ignore */
       } finally {
@@ -29,20 +33,10 @@ export function TopMovers() {
       }
     };
     load();
-    const timer = setInterval(() => {
-      void fetchTickerTape([], { force: true }).then((data) => {
-        if (alive) setRows(data);
-      }).catch(() => {});
-    }, 20_000);
+    const timer = setInterval(() => load(true), 30_000);
     return () => { alive = false; clearInterval(timer); };
   }, []);
 
-  const { gainers, losers } = useMemo(() => {
-    const sorted = [...rows].filter((r) => r.cmp > 0);
-    const gainers = sorted.sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
-    const losers = sorted.sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
-    return { gainers, losers };
-  }, [rows]);
 
   if (loading) {
     return (
@@ -53,7 +47,7 @@ export function TopMovers() {
     );
   }
 
-  if (!rows.length) return null;
+  if (!gainers.length && !losers.length) return null;
 
   const renderList = (
     items: TickerRow[],

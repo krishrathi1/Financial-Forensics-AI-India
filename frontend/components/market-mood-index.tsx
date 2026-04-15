@@ -3,18 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { MarketStatusBadge } from "@/components/market-status-badge";
-import { fetchTickerTape } from "@/lib/api";
+import { fetchMarketSummary } from "@/lib/api";
 
 type MoodLevel = "Extreme Fear" | "Fear" | "Neutral" | "Greed" | "Extreme Greed";
-
-function getMoodFromData(rows: Array<{ changePercent: number }>): number {
-  if (!rows.length) return 50;
-  const positiveCount = rows.filter((r) => r.changePercent > 0).length;
-  const avgChange = rows.reduce((sum, r) => sum + r.changePercent, 0) / rows.length;
-  const breadthScore = (positiveCount / rows.length) * 100;
-  const momentumScore = Math.max(0, Math.min(100, 50 + avgChange * 15));
-  return Math.round(breadthScore * 0.6 + momentumScore * 0.4);
-}
 
 function getMoodLevel(value: number): MoodLevel {
   if (value <= 20) return "Extreme Fear";
@@ -34,38 +25,37 @@ function getMoodColor(value: number): string {
 
 function getMoodEmoji(level: MoodLevel): string {
   switch (level) {
-    case "Extreme Fear": return "";
-    case "Fear": return "";
-    case "Neutral": return "";
-    case "Greed": return "";
-    case "Extreme Greed": return "";
+    case "Extreme Fear": return "😨";
+    case "Fear": return "😟";
+    case "Neutral": return "😐";
+    case "Greed": return "🙂";
+    case "Extreme Greed": return "😁";
   }
 }
 
 export function MarketMoodIndex() {
   const [moodValue, setMoodValue] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState("");
 
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    const load = async (force = false) => {
       try {
-        const data = await fetchTickerTape([], { force: false });
-        if (alive && data.length) {
-          setMoodValue(getMoodFromData(data));
+        const data = await fetchMarketSummary({ force });
+        if (alive) {
+          setMoodValue(data.mood);
+          setUpdatedAt(data.updatedAt);
         }
       } catch {
-        /* keep default */
+        /* fallback to default */
       } finally {
         if (alive) setLoading(false);
       }
     };
+
     load();
-    const timer = setInterval(() => {
-      void fetchTickerTape([], { force: true }).then((data) => {
-        if (alive && data.length) setMoodValue(getMoodFromData(data));
-      }).catch(() => {});
-    }, 30_000);
+    const timer = setInterval(() => load(true), 30_000);
     return () => { alive = false; clearInterval(timer); };
   }, []);
 
