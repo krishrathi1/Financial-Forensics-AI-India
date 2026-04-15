@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { fmpProvider } from '@/lib/providers/fmp';
+import { yahooProvider } from '@/lib/providers/yahoo';
 import { nseProvider } from '@/lib/providers/nse';
 
 export async function GET(
@@ -10,18 +12,44 @@ export async function GET(
     const searchParams = request.nextUrl.searchParams;
     const days = searchParams.get('days') || '1D';
 
-    const data = await nseProvider.getStockChart(symbol, days);
+    // Hierarchy 1: Try FMP (Most detailed for Global/US, good for some IN)
+    let history = await fmpProvider.getStockChart(symbol, days);
     
-    if (!data || !data.grapthData) {
-      // Try with EQ suffix if direct symbol failed (common for some NSE stocks in this specific endpoint)
-      const dataFallback = await nseProvider.getStockChart(symbol + 'EQ', days);
-      if (dataFallback && dataFallback.grapthData) {
-        return handleChartData(dataFallback, symbol);
-      }
-      throw new Error(`Chart data not found for ${symbol}`);
+    // Hierarchy 2: Try Yahoo Finance (Best robust fallback for IN midcaps)
+    if (!history || history.length === 0) {
+      console.log(`[ChartAPI] FMP failed for ${symbol}, trying Yahoo...`);
+      history = await yahooProvider.getStockChart(symbol, days);
     }
 
-    return handleChartData(data, symbol);
+    // Hierarchy 3: Try NSE (Last resort for intraday if others fail)
+    if (!history || history.length === 0) {
+      console.log(`[ChartAPI] Yahoo failed for ${symbol}, trying NSE...`);
+      const nseData = await nseProvider.getStockChart(symbol, days);
+      if (nseData && nseData.grapthData) {
+        history = nseData.grapthData.map((p: any[]) => ({
+          date: new Date(p[0]).toISOString(),
+          close: Number(p[1]) || 0,
+        }));
+      }
+    }
+    
+    if (!history || history.length === 0) {
+      // Return empty successful response rather than 500 to keep UI stable
+      return NextResponse.json({
+        identifier: symbol.toUpperCase(),
+        name: symbol.toUpperCase(),
+        history: [],
+        timestamp: new Date().toISOString(),
+        error: "No chart data available"
+      });
+    }
+
+    return NextResponse.json({
+      identifier: symbol.toUpperCase(),
+      name: symbol.toUpperCase(),
+      history: history,
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     console.error('Chart data error:', error);
     return NextResponse.json(
@@ -29,26 +57,4 @@ export async function GET(
       { status: 500 }
     );
   }
-}
-
-function handleChartData(data: any, symbol: string) {
-  const graphData = data.grapthData || [];
-  
-  // Transform NSE graph data to PriceChart format
-  // NSE format: [timestamp, price]
-  const transformedHistory = graphData.map((point: any[]) => {
-    return {
-      date: new Date(point[0]).toISOString(),
-      close: Number(point[1]) || 0,
-    };
-  });
-
-  return NextResponse.json({
-    identifier: symbol,
-    name: symbol.toUpperCase(),
-    graphData: graphData,
-    history: transformedHistory,
-    closePrice: data.closePrice || null,
-    timestamp: new Date().toISOString(),
-  });
 }

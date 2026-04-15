@@ -111,16 +111,17 @@ export class NewsProvider {
     return finalArticles;
   }
 
-  async getStockNews(symbol: string): Promise<NewsArticle[]> {
+  async getStockNews(symbol: string, industry?: string): Promise<NewsArticle[]> {
     if (!this.apiKey) return [];
     
     try {
+      // 1. Try specific stock search
       const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(symbol + " stock India")}&sortBy=relevancy&language=en&pageSize=10&apiKey=${this.apiKey}`;
       const response = await fetch(url, { next: { revalidate: 3600 } });
       if (!response.ok) return [];
       const data = await response.json();
       
-      return (data?.articles || []).map((article: any) => ({
+      let articles = (data?.articles || []).map((article: any) => ({
         title: article.title,
         source: article.source?.name || 'News',
         publishedAt: article.publishedAt,
@@ -128,6 +129,26 @@ export class NewsProvider {
         summary: article.description || '',
         imageUrl: article.urlToImage || MARKET_PLACEHOLDER,
       }));
+
+      // 2. If no specific news, try industry/sector search
+      if (articles.length === 0 && industry && industry !== 'N/A') {
+        console.log(`[NewsProvider] No specific news for ${symbol}, trying industry: ${industry}`);
+        const industryUrl = `https://newsapi.org/v2/everything?q=${encodeURIComponent(industry + " sector India stock market")}&sortBy=relevancy&language=en&pageSize=10&apiKey=${this.apiKey}`;
+        const industryResponse = await fetch(industryUrl, { next: { revalidate: 7200 } });
+        if (industryResponse.ok) {
+          const industryData = await industryResponse.json();
+          articles = (industryData?.articles || []).map((article: any) => ({
+            title: article.title,
+            source: article.source?.name || 'Industry News',
+            publishedAt: article.publishedAt,
+            url: article.url,
+            summary: article.description || '',
+            imageUrl: article.urlToImage || MARKET_PLACEHOLDER,
+          }));
+        }
+      }
+
+      return articles;
     } catch (error) {
       console.error(`[NewsProvider] Failed to fetch news for ${symbol}:`, error);
       return [];

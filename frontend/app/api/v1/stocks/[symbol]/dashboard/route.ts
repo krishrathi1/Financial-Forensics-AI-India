@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { nseProvider } from '@/lib/providers/nse';
 import { fmpProvider } from '@/lib/providers/fmp';
 import { newsProvider } from '@/lib/providers/news';
+import { yahooProvider } from '@/lib/providers/yahoo';
 
 export async function GET(
   request: NextRequest,
@@ -10,32 +11,37 @@ export async function GET(
   try {
     const { symbol } = await params;
     
-    // 1. Fetch live quote and chart from NSE
-    const [nseQuote, nseChart] = await Promise.all([
+    // 1. Fetch data from primary sources
+    const [nseQuote, fmpMetrics, fmpProfile] = await Promise.all([
       nseProvider.getStockQuote(symbol),
-      nseProvider.getStockChart(symbol, '1D')
-    ]);
-    
-    // 2. Fetch fundamentals and news
-    const [fmpMetrics, fmpProfile, stockNews] = await Promise.all([
       fmpProvider.getCompanyMetrics(symbol),
-      fmpProvider.getCompanyProfile(symbol),
-      newsProvider.getStockNews(symbol)
+      fmpProvider.getCompanyProfile(symbol)
     ]);
 
     if (!nseQuote) {
       throw new Error(`Symbol ${symbol} not found on NSE`);
     }
 
-    const priceInfo = nseQuote.priceInfo || {};
     const metadata = nseQuote.metadata || {};
+    const industry = fmpProfile?.industry || metadata.industry || 'N/A';
+
+    // 2. Fetch chart and news with fallbacks
+    // First try FMP for chart, fallback to Yahoo
+    let fmpChart = await fmpProvider.getStockChart(symbol, '1D');
+    if (!fmpChart || fmpChart.length === 0) {
+      fmpChart = await yahooProvider.getStockChart(symbol, '1D');
+    }
+
+    // Pass the industry to news for better fallbacks
+    const stockNews = await newsProvider.getStockNews(symbol, industry);
+
+    const priceInfo = nseQuote.priceInfo || {};
     const securityInfo = nseQuote.securityInfo || {};
     const tradeInfo = nseQuote.marketDeptOrderBook?.tradeInfo || {};
 
-    const graphData = nseChart?.grapthData || [];
-    const history = graphData.map((point: any[]) => ({
-      date: new Date(point[0]).toISOString(),
-      close: Number(point[1]) || 0,
+    const history = (fmpChart || []).map((point: any) => ({
+      date: point.date,
+      close: point.close || 0,
     }));
 
     // 3. Construct full real dashboard data
@@ -50,7 +56,7 @@ export async function GET(
         ceo: fmpProfile?.ceo || 'N/A',
         chairman: 'N/A',
         employees: fmpProfile?.fullTimeEmployees || 'N/A',
-        industry: fmpProfile?.industry || metadata.industry || 'N/A',
+        industry: industry,
         incorporationYear: 'N/A',
         headquarters: fmpProfile?.city ? `${fmpProfile.city}, ${fmpProfile.country}` : 'N/A',
         previousName: 'N/A',
@@ -64,7 +70,7 @@ export async function GET(
         fiftyTwoWeekHigh: tradeInfo.fiftyTwoWeekHigh || 0,
         currency: 'INR',
         history: history,
-        intraday: history // For 1D view
+        intraday: history
       },
       metrics: {
         marketCapCr: (fmpProfile?.mktCap || 0) / 10000000,
@@ -79,7 +85,7 @@ export async function GET(
         faceValue: securityInfo.faceValue || 10,
         bookValue: fmpMetrics?.bookValuePerShareTTM || 0,
         evToSales: fmpMetrics?.evToSalesTTM || 0,
-        outstandingShares: (fmpProfile?.mktCap || 0) / (priceInfo.lastPrice || 1) / 10000000, // Est in Cr
+        outstandingShares: (fmpProfile?.mktCap || 0) / (priceInfo.lastPrice || 1) / 10000000,
       },
       financials: {
         marketCapCr: (fmpProfile?.mktCap || 0) / 10000000,
