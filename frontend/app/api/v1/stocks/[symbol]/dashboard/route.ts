@@ -11,43 +11,99 @@ export async function GET(
   try {
     const { symbol } = await params;
     
-    // 1. Fetch data from primary sources
-    const [nseQuote, fmpMetrics, fmpProfile] = await Promise.all([
+    // 1. Fetch data from all sources (NSE NextApi + FMP)
+    const [
+      nseQuote, 
+      fmpMetrics, 
+      fmpProfile,
+      yearwisePerf,
+      deepData,
+      metaData,
+      corpInfo
+    ] = await Promise.all([
       nseProvider.getStockQuote(symbol),
       fmpProvider.getCompanyMetrics(symbol),
-      fmpProvider.getCompanyProfile(symbol)
+      fmpProvider.getCompanyProfile(symbol),
+      nseProvider.getYearwisePerformance(symbol),
+      nseProvider.getSymbolDataDeep(symbol),
+      nseProvider.getMetaData(symbol),
+      nseProvider.getCorporateActions(symbol)
     ]);
 
     if (!nseQuote) {
       throw new Error(`Symbol ${symbol} not found on NSE`);
     }
 
-    const metadata = nseQuote.metadata || {};
+    const priceInfo = nseQuote.priceInfo || {};
+    const metadata = nseQuote.metadata || metaData || {};
+    const securityInfo = nseQuote.securityInfo || {};
+    const tradeInfo = nseQuote.marketDeptOrderBook?.tradeInfo || {};
+    const deliveryData = deepData?.equityResponse?.deliveryData || {};
+    const perf = (yearwisePerf && yearwisePerf[0]) || {};
+
     const industry = fmpProfile?.industry || metadata.industry || 'N/A';
 
-    // 2. Fetch chart and news with fallbacks
-    // First try FMP for chart, fallback to Yahoo
+    // 2. Fetch chart and news
     let fmpChart = await fmpProvider.getStockChart(symbol, '1D');
     if (!fmpChart || fmpChart.length === 0) {
       fmpChart = await yahooProvider.getStockChart(symbol, '1D');
     }
-
-    // Pass the industry to news for better fallbacks
     const stockNews = await newsProvider.getStockNews(symbol, industry);
-
-    const priceInfo = nseQuote.priceInfo || {};
-    const securityInfo = nseQuote.securityInfo || {};
-    const tradeInfo = nseQuote.marketDeptOrderBook?.tradeInfo || {};
 
     const history = (fmpChart || []).map((point: any) => ({
       date: point.date,
       close: point.close || 0,
     }));
 
-    // 3. Construct full real dashboard data
+    // 3. Technicals (Calculate Pivot Points)
+    // Standard Pivot: P = (H + L + C) / 3
+    const high = priceInfo.intraDayHighLow?.max || priceInfo.high || 0;
+    const low = priceInfo.intraDayHighLow?.min || priceInfo.low || 0;
+    const close = priceInfo.lastPrice || 0;
+    
+    const pivot = (high + low + close) / 3;
+    const technicals = {
+      pivots: {
+        standard: {
+          p: pivot,
+          r1: (2 * pivot) - low,
+          r2: pivot + (high - low),
+          r3: high + 2 * (pivot - low),
+          s1: (2 * pivot) - high,
+          s2: pivot - (high - low),
+          s3: low - 2 * (high - pivot)
+        },
+        fibonacci: {
+          p: pivot,
+          r1: pivot + (0.382 * (high - low)),
+          r2: pivot + (0.618 * (high - low)),
+          r3: pivot + (1.000 * (high - low)),
+          s1: pivot - (0.382 * (high - low)),
+          s2: pivot - (0.618 * (high - low)),
+          s3: pivot - (1.000 * (high - low))
+        }
+      }
+    };
+
+    // 4. Smart Score & Risk Score Logic
+    // Smart Score (Profitability, Growth, Valuation, Momentum, Health)
+    const profitability = Math.min(5, (fmpMetrics?.returnOnEquityTTM || 0) * 10 + (fmpMetrics?.ebitdaMarginTTM || 0) * 5);
+    const growth = Math.min(5, (fmpMetrics?.revenueGrowthTTM || 0) * 5 + (fmpMetrics?.epsgrowthTTM || 0) * 5);
+    const momentum = Math.min(5, (priceInfo.pChange || 0) > 0 ? 4 : 2);
+    const health = Math.min(5, 5 - (fmpMetrics?.debtToEquityTTM || 1) / 2);
+    const valuation = Math.min(5, 5 - (fmpMetrics?.peRatioTTM || 20) / 40);
+
+    const smartScore = (profitability + growth + momentum + health + valuation) / 5;
+
+    // Risk Score
+    const financialRisk = Math.min(5, (fmpMetrics?.debtToEquityTTM || 0));
+    const priceTrendRisk = Math.min(5, Math.abs(priceInfo.pChange || 0) / 2);
+    const riskScore = (financialRisk + priceTrendRisk + 2) / 3;
+
+    // 5. Construct full real dashboard data
     const dashboardData = {
       symbol: symbol.toUpperCase(),
-      companyName: metadata.companyName || symbol.toUpperCase(),
+      companyName: metaData?.companyName || metadata.companyName || symbol.toUpperCase(),
       exchange: 'NSE',
       sector: metadata.sector || 'N/A',
       profile: {
@@ -57,10 +113,9 @@ export async function GET(
         chairman: 'N/A',
         employees: fmpProfile?.fullTimeEmployees || 'N/A',
         industry: industry,
-        incorporationYear: 'N/A',
+        incorporationYear: metaData?.activeSeries?.[0] || 'N/A',
         headquarters: fmpProfile?.city ? `${fmpProfile.city}, ${fmpProfile.country}` : 'N/A',
-        previousName: 'N/A',
-        marketCap: fmpProfile?.mktCap || 0,
+        marketCap: fmpProfile?.mktCap || deepData?.equityResponse?.totalMarketCap || 0,
       },
       price: {
         cmp: priceInfo.lastPrice || 0,
@@ -72,28 +127,33 @@ export async function GET(
         history: history,
         intraday: history
       },
+      returns: {
+        '1W': perf.one_week_chng_per || 0,
+        '1M': perf.one_month_chng_per || 0,
+        '6M': perf.six_month_chng_per || 0,
+        '1Y': perf.one_year_chng_per || 0,
+        '3Y': perf.three_year_chng_per || 0,
+        '5Y': perf.five_year_chng_per || 0,
+        heatmap: yearwisePerf || []
+      },
       metrics: {
-        marketCapCr: (fmpProfile?.mktCap || 0) / 10000000,
+        marketCapCr: (fmpProfile?.mktCap || deepData?.equityResponse?.totalMarketCap || 0) / 10000000,
         peRatio: fmpMetrics?.peRatioTTM || 0,
-        pegRatio: fmpMetrics?.pegRatioTTM || 0,
         roe: (fmpMetrics?.returnOnEquityTTM || 0) * 100,
         roce: (fmpMetrics?.returnOnCapitalEmployedTTM || 0) * 100,
-        roa: (fmpMetrics?.returnOnAssetsTTM || 0) * 100,
-        ebitdaMargin: (fmpMetrics?.ebitdaMarginTTM || 0) * 100,
         dividendYield: (fmpMetrics?.dividendYieldTTM || 0) * 100,
         eps: fmpMetrics?.netIncomePerShareTTM || 0,
         faceValue: securityInfo.faceValue || 10,
-        bookValue: fmpMetrics?.bookValuePerShareTTM || 0,
-        evToSales: fmpMetrics?.evToSalesTTM || 0,
-        outstandingShares: (fmpProfile?.mktCap || 0) / (priceInfo.lastPrice || 1) / 10000000,
+        outstandingShares: (fmpProfile?.mktCap || deepData?.equityResponse?.totalMarketCap || 0) / (priceInfo.lastPrice || 1) / 10000000,
+        deliveryPercent: deliveryData.deliveryToTradedQuantity || 0,
       },
-      financials: {
-        marketCapCr: (fmpProfile?.mktCap || 0) / 10000000,
-        peRatio: fmpMetrics?.peRatioTTM || 0,
-        roe: (fmpMetrics?.returnOnEquityTTM || 0) * 100,
-        roce: (fmpMetrics?.returnOnCapitalEmployedTTM || 0) * 100,
-        dividendYield: (fmpMetrics?.dividendYieldTTM || 0) * 100,
+      technicals: technicals,
+      scores: {
+        smart: smartScore,
+        risk: riskScore,
+        profitability, growth, valuation, momentum, health
       },
+      corporateActions: corpInfo || {},
       news: stockNews,
       updatedAt: new Date().toISOString()
     };

@@ -148,6 +148,91 @@ export class NSEProvider {
       return null;
     }
   }
+
+  async getSymbolDataDeep(symbol: string): Promise<any> {
+    const cookies = await this.ensureCookies();
+    const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=EQ&symbol=${encodeURIComponent(symbol.toUpperCase())}`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          ...NSE_HEADERS,
+          Cookie: cookies,
+        },
+        next: { revalidate: 300 }
+      });
+
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error(`Failed to fetch deep symbol data for ${symbol}:`, error);
+      return null;
+    }
+  }
+
+  async getYearwisePerformance(symbol: string): Promise<any> {
+    const cookies = await this.ensureCookies();
+    // Use EQN suffix for yearwise data
+    const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getYearwiseData&symbol=${encodeURIComponent(symbol.toUpperCase())}EQN`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          ...NSE_HEADERS,
+          Cookie: cookies,
+        },
+        next: { revalidate: 3600 } // Performance doesn't change fast
+      });
+
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error(`Failed to fetch yearwise performance for ${symbol}:`, error);
+      return null;
+    }
+  }
+
+  async getMetaData(symbol: string): Promise<any> {
+    const cookies = await this.ensureCookies();
+    const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getMetaData&symbol=${encodeURIComponent(symbol.toUpperCase())}`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          ...NSE_HEADERS,
+          Cookie: cookies,
+        },
+        next: { revalidate: 3600 }
+      });
+
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error(`Failed to fetch metadata for ${symbol}:`, error);
+      return null;
+    }
+  }
+
+  async getCorporateActions(symbol: string): Promise<any> {
+    const cookies = await this.ensureCookies();
+    const url = `https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(symbol.toUpperCase())}&section=corp_info`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          ...NSE_HEADERS,
+          Cookie: cookies,
+        },
+        next: { revalidate: 3600 }
+      });
+
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error(`Failed to fetch corporate actions for ${symbol}:`, error);
+      return null;
+    }
+  }
 }
 
 export const nseProvider = new NSEProvider();
