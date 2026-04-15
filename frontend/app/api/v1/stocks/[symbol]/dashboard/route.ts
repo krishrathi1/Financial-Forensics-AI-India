@@ -10,28 +10,30 @@ export async function GET(
 ) {
   try {
     const { symbol } = await params;
+    const cleanSymbol = symbol.toUpperCase();
     
     // 1. Fetch data from all sources (NSE NextApi + FMP)
+    // We try to fetch FMP with SYMBOL.NS immediately for better Indian market coverage
     const [
       nseQuote, 
       fmpMetrics, 
-      fmpProfile,
+      fmpProfileArr,
       yearwisePerf,
       deepData,
       metaData,
       corpInfo
     ] = await Promise.all([
-      nseProvider.getStockQuote(symbol),
-      fmpProvider.getCompanyMetrics(symbol),
-      fmpProvider.getCompanyProfile(symbol),
-      nseProvider.getYearwisePerformance(symbol),
-      nseProvider.getSymbolDataDeep(symbol),
-      nseProvider.getMetaData(symbol),
-      nseProvider.getCorporateActions(symbol)
+      nseProvider.getStockQuote(cleanSymbol),
+      fmpProvider.getCompanyMetrics(cleanSymbol),
+      fmpProvider.getCompanyProfile(cleanSymbol), // Already handles SYMBOL.NS in fmp.ts but we'll check it
+      nseProvider.getYearwisePerformance(cleanSymbol),
+      nseProvider.getSymbolDataDeep(cleanSymbol),
+      nseProvider.getMetaData(cleanSymbol),
+      nseProvider.getCorporateActions(cleanSymbol)
     ]);
 
     if (!nseQuote) {
-      throw new Error(`Symbol ${symbol} not found on NSE`);
+      throw new Error(`Symbol ${cleanSymbol} not found on NSE`);
     }
 
     const priceInfo = nseQuote.priceInfo || {};
@@ -40,15 +42,18 @@ export async function GET(
     const tradeInfo = nseQuote.marketDeptOrderBook?.tradeInfo || {};
     const deliveryData = deepData?.equityResponse?.deliveryData || {};
     const perf = (yearwisePerf && yearwisePerf[0]) || {};
+    
+    // Extract first profile if it's an array (typical FMP response)
+    const fmpProfile = Array.isArray(fmpProfileArr) ? fmpProfileArr[0] : fmpProfileArr;
 
     const industry = fmpProfile?.industry || metadata.industry || 'N/A';
 
     // 2. Fetch chart and news
-    let fmpChart = await fmpProvider.getStockChart(symbol, '1D');
+    let fmpChart = await fmpProvider.getStockChart(cleanSymbol, '1D');
     if (!fmpChart || fmpChart.length === 0) {
-      fmpChart = await yahooProvider.getStockChart(symbol, '1D');
+      fmpChart = await yahooProvider.getStockChart(cleanSymbol, '1D');
     }
-    const stockNews = await newsProvider.getStockNews(symbol, industry);
+    const stockNews = await newsProvider.getStockNews(cleanSymbol, industry);
 
     const history = (fmpChart || []).map((point: any) => ({
       date: point.date,
@@ -56,7 +61,6 @@ export async function GET(
     }));
 
     // 3. Technicals (Calculate Pivot Points)
-    // Standard Pivot: P = (H + L + C) / 3
     const high = priceInfo.intraDayHighLow?.max || priceInfo.high || 0;
     const low = priceInfo.intraDayHighLow?.min || priceInfo.low || 0;
     const close = priceInfo.lastPrice || 0;
@@ -86,7 +90,6 @@ export async function GET(
     };
 
     // 4. Smart Score & Risk Score Logic
-    // Smart Score (Profitability, Growth, Valuation, Momentum, Health)
     const profitability = Math.min(5, (fmpMetrics?.returnOnEquityTTM || 0) * 10 + (fmpMetrics?.ebitdaMarginTTM || 0) * 5);
     const growth = Math.min(5, (fmpMetrics?.revenueGrowthTTM || 0) * 5 + (fmpMetrics?.epsgrowthTTM || 0) * 5);
     const momentum = Math.min(5, (priceInfo.pChange || 0) > 0 ? 4 : 2);
@@ -95,26 +98,25 @@ export async function GET(
 
     const smartScore = (profitability + growth + momentum + health + valuation) / 5;
 
-    // Risk Score
     const financialRisk = Math.min(5, (fmpMetrics?.debtToEquityTTM || 0));
     const priceTrendRisk = Math.min(5, Math.abs(priceInfo.pChange || 0) / 2);
     const riskScore = (financialRisk + priceTrendRisk + 2) / 3;
 
     // 5. Construct full real dashboard data
     const dashboardData = {
-      symbol: symbol.toUpperCase(),
-      companyName: metaData?.companyName || metadata.companyName || symbol.toUpperCase(),
+      symbol: cleanSymbol,
+      companyName: metaData?.companyName || metadata.companyName || cleanSymbol,
       exchange: 'NSE',
       sector: metadata.sector || 'N/A',
       profile: {
         description: fmpProfile?.description || metadata.pdSectorInd || 'N/A',
         website: fmpProfile?.website || 'N/A',
         ceo: fmpProfile?.ceo || 'N/A',
-        chairman: 'N/A',
-        employees: fmpProfile?.fullTimeEmployees || 'N/A',
+        chairman: fmpProfile?.ceo || 'N/A', // Fallback to CEO as FMP usually maps the leader here
+        employees: parseInt(fmpProfile?.fullTimeEmployees || '0') || 'N/A',
         industry: industry,
-        incorporationYear: metaData?.activeSeries?.[0] || 'N/A',
-        headquarters: fmpProfile?.city ? `${fmpProfile.city}, ${fmpProfile.country}` : 'N/A',
+        incorporationYear: metaData?.activeSeries?.[0] || fmpProfile?.ipoDate?.substring(0, 4) || 'N/A',
+        headquarters: fmpProfile?.city ? `${fmpProfile.city}, ${fmpProfile.country}` : metadata.address || 'N/A',
         marketCap: fmpProfile?.mktCap || deepData?.equityResponse?.totalMarketCap || 0,
       },
       price: {
@@ -171,3 +173,4 @@ export async function GET(
     );
   }
 }
+
