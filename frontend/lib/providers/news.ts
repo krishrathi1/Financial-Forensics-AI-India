@@ -111,6 +111,29 @@ export class NewsProvider {
     return finalArticles;
   }
 
+  async getStockNews(symbol: string): Promise<NewsArticle[]> {
+    if (!this.apiKey) return [];
+    
+    try {
+      const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(symbol + " stock India")}&sortBy=relevancy&language=en&pageSize=10&apiKey=${this.apiKey}`;
+      const response = await fetch(url, { next: { revalidate: 3600 } });
+      if (!response.ok) return [];
+      const data = await response.json();
+      
+      return (data?.articles || []).map((article: any) => ({
+        title: article.title,
+        source: article.source?.name || 'News',
+        publishedAt: article.publishedAt,
+        url: article.url,
+        summary: article.description || '',
+        imageUrl: article.urlToImage || MARKET_PLACEHOLDER,
+      }));
+    } catch (error) {
+      console.error(`[NewsProvider] Failed to fetch news for ${symbol}:`, error);
+      return [];
+    }
+  }
+
   private async getTheNewsAPIArticles(): Promise<NewsArticle[]> {
     const queries = [
       '"Nifty 50" | "BSE Sensex"',

@@ -104,6 +104,50 @@ export class NSEProvider {
       return [];
     }
   }
+
+  async getStockQuote(symbol: string): Promise<any> {
+    const cookies = await this.ensureCookies();
+    const url = `https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(symbol.toUpperCase())}`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          ...NSE_HEADERS,
+          Cookie: cookies,
+        },
+        next: { revalidate: 300 } // 5 minutes cache
+      });
+
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error(`Failed to fetch NSE quote for ${symbol}:`, error);
+      return null;
+    }
+  }
+
+  async getStockChart(symbol: string, timeframe: string = '1D'): Promise<any> {
+    const cookies = await this.ensureCookies();
+    
+    // For stocks, we try the symbol directly, as identified in research.
+    const url = `https://www.nseindia.com/api/chart-databyindex?index=${encodeURIComponent(symbol.toUpperCase())}&indices=false`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          ...NSE_HEADERS,
+          Cookie: cookies,
+        },
+        next: { revalidate: 300 }
+      });
+
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (error) {
+      console.error(`Failed to fetch NSE chart for ${symbol}:`, error);
+      return null;
+    }
+  }
 }
 
 export const nseProvider = new NSEProvider();
