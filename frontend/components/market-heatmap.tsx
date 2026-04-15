@@ -15,6 +15,7 @@ type HeatmapRow = {
 
 const INDEX_OPTIONS = [
   "NIFTY 50",
+  "NIFTY 500",
   "NIFTY BANK",
   "NIFTY FINANCIAL SERVICES",
   "NIFTY MIDCAP 100",

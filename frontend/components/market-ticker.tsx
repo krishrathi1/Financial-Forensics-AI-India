@@ -59,9 +59,12 @@ export function MarketTicker() {
   }, [rows]);
 
   const durationSeconds = useMemo(() => {
-    const minDuration = 212; // 360 / 1.7
-    const maxDuration = 1882; // 3200 / 1.7
-    const secondsPerItem = 5.88; // 10 / 1.7
+    // With 501 items, tape becomes 1002.
+    // We want a faster speed for the "All A-Z" view.
+    const speedMultiplier = tape.length > 200 ? 0.35 : 1.7; 
+    const minDuration = 60; 
+    const maxDuration = 1200; // Cap at 20 mins
+    const secondsPerItem = 10 / speedMultiplier;
     return Math.max(minDuration, Math.min(maxDuration, Math.round(tape.length * secondsPerItem)));
   }, [tape.length]);
 
